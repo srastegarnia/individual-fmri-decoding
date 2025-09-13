@@ -1,9 +1,10 @@
 # Brain Decoding of HCP Tasks in a Dense Individual fMRI Dataset
 [![DOI](https://img.shields.io/badge/DOI-10.1016%2Fj.neuroimage.2023.120395-blue)](https://doi.org/10.1016/j.neuroimage.2023.120395)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 This repository contains the code accompanying the research paper:
 
-**Rastegarnia, S. et al. (2023). Brain decoding of the Human Connectome Project tasks in a dense individual fMRI dataset. NeuroImage, 283, 120395.**
+***Rastegarnia, S. et al. (2023). Brain decoding of the Human Connectome Project tasks in a dense individual fMRI dataset. NeuroImage, 283, 120395.***
 
 ## 🧠 Overview
 This project demonstrates that **highly accurate brain decoding models** can be trained entirely at the individual level using densely sampled fMRI data. 
@@ -24,7 +25,7 @@ high temporal resolution constraints.
 
 ## 📦 Repository Structure
 ```text
-hcptrt-decoding/
+individual-fmri-decoding/
 ├── benchmark_models/               # Core scripts for data processing and classical ML decoding
 │   ├── benchmark_decoders.py       # Main script to run all benchmark classifiers
 │   ├── hcptrt_data_loader.py       # Loads and preprocesses raw fMRI and event data
