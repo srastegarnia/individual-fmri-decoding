@@ -1,22 +1,26 @@
 # Brain Decoding of HCP Tasks in a Dense Individual fMRI Dataset
 [![DOI](https://img.shields.io/badge/DOI-10.1016%2Fj.neuroimage.2023.120395-blue)](https://doi.org/10.1016/j.neuroimage.2023.120395)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)(https://creativecommons.org/licenses/by/4.0/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 This repository contains the code accompanying the research paper:
 
-**Rastegarnia, S. et al. (2023). Brain decoding of the Human Connectome Project tasks in a dense individual fMRI dataset. NeuroImage, 283, 120395.
-DOI: https://doi.org/10.1016/j.neuroimage.2023.120395**
+**Rastegarnia, S. et al. (2023). Brain decoding of the Human Connectome Project tasks in a dense individual fMRI dataset. NeuroImage, 283, 120395.**
 
 ## 🧠 Overview
-This project demonstrates that highly accurate brain decoding models can be trained entirely at the individual level using densely sampled fMRI data. 
-We benchmarked nine machine learning classifiers to decode 21 experimental conditions from the Human Connectome Project (HCP) task battery using one of 
+This project demonstrates that **highly accurate brain decoding models** can be trained entirely at the individual level using densely sampled fMRI data. 
+We benchmarked 9+ machine learning classifiers to decode 21 experimental conditions from the Human Connectome Project (HCP) task battery using one of 
 the largest collections of individual multi-task fMRI data available to date (~7 hours per subject).
 
+**Key Technical Achievement:** Our implementation successfully handles the complex challenge of 
+**decoding multiple task conditions from single TR (Repetition Time) resolution fMRI data**, achieving remarkable decoding accuracy despite the 
+high temporal resolution constraints.
+
 ## Key Findings:
-- Item 1 High decoding accuracy (57-67%) using individual models, approaching state-of-the-art group-level models trained on >1000x more data
-- Item 2 Multi-Layer Perceptron (MLP) and Graph Convolutional Networks (GCN) were the top-performing models
-- Item 3 Models learned highly subject-specific features that did not generalize well across participants
-- Item 4 Higher-resolution brain parcellations (e.g., Schaefer-1000) generally yielded better results
-- Item 5 Feature importance maps revealed expected brain regions for relevant cognitive domains
+- High decoding accuracy (57-67%) using individual models, approaching state-of-the-art group-level models trained on >500x more data
+- Multi-Layer Perceptron (MLP) and Graph Convolutional Networks (GCN) were the top-performing models
+- Models learned highly subject-specific features that did not generalize well across participants
+- Higher-resolution brain parcellations (e.g., Schaefer-1000) generally yielded better results
+- Feture importance maps revealed expected brain regions for relevant cognitive domains
+- Successful multi-task decoding at single-TR resolution demonstrating fine-grained temporal discrimination capabilities
 
 ## 📦 Repository Structure
 ```text
@@ -47,13 +51,15 @@ hcptrt-decoding/
 ```
 
 ## 🚀 Getting Started
-1. First item Prerequisites
-- Item 1 Python 3.7+
-- Item 2 The dataset: CNeuroMod hcptrt
-* The dense individual fMRI dataset used in this work is publicly available as part of the CNeuroMod databank. 
+1. **Prerequisites**
+- Python 3.7+
+- The dataset: CNeuroMod hcptrt
+
+The dense individual fMRI dataset used in this work is publicly available as part of the CNeuroMod databank. 
 Access requires an inter-institutional data transfer agreement. See the [CNeuroMod access instructions](https://www.cneuromod.ca/access/).
 
-2. Second item Installation
+2. **Installation**
+
 Clone this repository and install the required Python packages:
 ```bash
 git clone https://github.com/srastegarnia/individual-fmri-decoding.git
@@ -62,13 +68,13 @@ pip install -r requirements.txt
 ```
 ## 🔧 Usage
 ### Pipeline 1: Classical Machine Learning Benchmark
-Data Preparation:
+**Data Preparation:**
 ```bash
 cd benchmark_models
 # Run data loading and preparation
 ```
 
-Running the Benchmark:
+**Running the Benchmark:**
 ```python
 for task_label in task_labels:    
     tpl_mask = path + 'mask_file.nii.gz'
@@ -85,12 +91,12 @@ for task_label in task_labels:
 
 ## 📊 Outputs
 The pipelines generate:
-- Item 1 **Processed Data:** NumPy arrays (.npy) and CSV files
-- Item 2 **Functional Connectomes:** Adjacency matrices
-- Item 3 **Beta Maps:** GLM-generated condition maps
-- Item 4 **Results Summary:** Accuracy metrics
-- Item 5 **Visualizations:** Confusion matrices, training plots
-- Item 6 **Trained Models:** Saved model weights
+- **Processed Data:** NumPy arrays (.npy) and CSV files
+- **Functional Connectomes:** Adjacency matrices
+- **Beta Maps:** GLM-generated condition maps
+- **Results Summary:** Accuracy metrics
+- **Visualizations:** Confusion matrices, training plots
+- **Trained Models:** Saved model weights
 
 ## 🤝 Contributing
 Contributions to improve the code or extend the benchmarks are welcome. Please fork the repository and submit a Pull Request.
@@ -109,7 +115,8 @@ This work is part of the Courtois Project on Neuronal Modeling (CNeuroMod), made
 **Data:** The CNeuroMod team and all research participants
 
 ## 📫 Contact
-- Item 1 Shima Rastegarnia: srastegarnia@gmail.com
+- Shima Rastegarnia: srastegarnia@gmail.com
+
 Please cite our work if you use this code:
 ``` bibtex
 @article{Rastegarnia2023,
