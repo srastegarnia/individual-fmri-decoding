@@ -28,7 +28,14 @@ from sklearn.ensemble import RandomForestClassifier, BaggingClassifier
 from termcolor import colored
 
 # sys.path.append(os.path.join(".."))
-import visualization
+# works both as package and script:
+try:
+    from . import visualization
+except ImportError as e:
+    if getattr(e, "name", "") == "visualization":
+        import visualization  # fallback if run as a script
+    else:
+        raise
 
 # ---------- Paths, logging, constants ----------
 logging.basicConfig(
