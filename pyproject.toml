@@ -1,0 +1,15 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+exclude = ["timeseries_benchmark/*"]
+
+# Enable a smart set of rules:
+# E,F: pycodestyle/pyflakes (core)
+# I: import sorting
+# UP: modernize syntax (pyupgrade)
+# B: bugbear (likely bugs/misuse)
+# C4: better list/dict/set comprehensions
+extend-select = ["I", "UP", "B", "C4"]
+
+# We purposely allow late imports in a few places already tagged with `# noqa: E402`
+ignore = ["E402"]
