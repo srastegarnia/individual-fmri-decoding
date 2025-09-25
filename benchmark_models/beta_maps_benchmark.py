@@ -1,26 +1,26 @@
 # /home/shima/projects/individual-fmri-decoding/benchmark_models/beta_maps_benchmark.py
 
-import os
 import csv
-import sys
 import logging
+import os
+import sys
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import nibabel as nib
 import numpy as np
 import pandas as pd
-import nibabel as nib
-import matplotlib.pyplot as plt
-
 from nilearn import image, plotting
-from nilearn.maskers import NiftiMasker
-from nilearn.glm.first_level import FirstLevelModel
 from nilearn.decoding import Decoder
+from nilearn.glm.first_level import FirstLevelModel
+from nilearn.maskers import NiftiMasker
 from sklearn.model_selection import KFold, cross_val_score
 from sklearn.svm import LinearSVC
 
 # Repo utils
 sys.path.append(os.path.join("../"))
 import utils  # noqa: E402
+
 #from load_confounds import Params9  # noqa: E402
 
 # ----------------------------- config ---------------------------------
@@ -113,7 +113,7 @@ def _generate_beta_maps(
 
     z_maps, condition_idx, session_idx = [], [], []
 
-    for i, (scan, event, confound) in enumerate(zip(scans, events, confounds), start=1):
+    for i, (scan, event, confound) in enumerate(zip(scans, events, confounds, strict=False), start=1):
         log.info("GLM %02d/%02d: %s", i, len(scans), scan)
 
         ses = scan.split("_task")[0].split("fmriprep-20.2lts/")[1].partition("_")[2]
@@ -257,7 +257,7 @@ def within_subject_decoding(subject: str, task_dir: str, task_label: str, mask_p
     masker = NiftiMasker(mask_img=mask_path).fit()
 
     scores = []
-    for ims, labs_file, runs_file in zip(subjects_list, labels_list, runs_list):
+    for ims, labs_file, runs_file in zip(subjects_list, labels_list, runs_list, strict=False):
         labs_idx = pd.read_table(labs_file, header=None).values.ravel()
         runs_idx = pd.read_table(runs_file, header=None).values.ravel()
 

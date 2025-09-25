@@ -1,31 +1,34 @@
+import csv
+import glob
+import importlib
+import logging
+import math
+import os
+import warnings
+from pathlib import Path
+from time import time
+
 import numpy as np
 import pandas as pd
-import glob
-import os
-import sys
-import warnings
-import math
-import csv
-from time import time
-import logging
-from pathlib import Path
-
-import matplotlib.pyplot as plt
-from nilearn.maskers import NiftiLabelsMasker, NiftiMasker, NiftiMapsMasker
-from nilearn.plotting import plot_matrix
-from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
-from sklearn.model_selection import GridSearchCV, LeaveOneGroupOut, train_test_split
-from sklearn.model_selection import RepeatedStratifiedKFold, KFold, cross_val_score, cross_val_predict
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.ensemble import BaggingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, RidgeClassifier
-from sklearn.neural_network import MLPClassifier
-from sklearn.svm import SVC
-from sklearn.naive_bayes import MultinomialNB, GaussianNB, ComplementNB, BernoulliNB
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.model_selection import (
+    GridSearchCV,
+    KFold,
+    RepeatedStratifiedKFold,
+    cross_val_predict,
+    cross_val_score,
+    train_test_split,
+)
+from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.ensemble import RandomForestClassifier, BaggingClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
+from sklearn.svm import SVC
+
 # from keras.models import Sequential
 # from keras.layers import Dense
-from termcolor import colored
 
 # sys.path.append(os.path.join(".."))
 # works both as package and script:
@@ -64,17 +67,15 @@ def _generate_all_modality_files(subject, modalities, region_approach,
 
     all_modality_concat_bold = []
     all_modality_concat_labels = []
-    parcels_no = []
+    # parcels_no = []
 
     for modality in modalities:
 
         final_bold_outpath = glob.glob(
-            proc_data_path + 'processed_data/proc_fMRI/{}/{}/{}/{}*{}*{}*.npy'.format(
-                region_approach, resolution, subject, subject, modality, HRFlag_process))
+            proc_data_path + f'processed_data/proc_fMRI/{region_approach}/{resolution}/{subject}/{subject}*{modality}*{HRFlag_process}*.npy')
 
         final_labels_outpath = glob.glob(
-            proc_data_path + 'processed_data/proc_events/{}/{}/{}/{}*{}*{}*.csv'.format(
-                region_approach, resolution, subject, subject, modality, HRFlag_process))
+            proc_data_path + f'processed_data/proc_events/{region_approach}/{resolution}/{subject}/{subject}*{modality}*{HRFlag_process}*.csv')
 
         for b_outpath in final_bold_outpath:
             bold_file = np.load(b_outpath)
@@ -101,8 +102,8 @@ def _grid_svm_decoder(all_modality_concat_bold, all_modality_concat_labels,
     """
     Support Vector Machine classifier with GridSearchCV.
     """
-    title = '{} Support Vector Machine using {}{}, {} HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
-    output_file_name = '{}_SVM_{}{}_{}_HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
+    title = f'{subject} Support Vector Machine using {region_approach}{resolution}, {HRFlag_process} HRFlag'
+    output_file_name = f'{subject}_SVM_{region_approach}{resolution}_{HRFlag_process}_HRFlag'
 
     X = all_modality_concat_bold
     y = all_modality_concat_labels
@@ -143,8 +144,8 @@ def _svm_decoder(all_modality_concat_bold, all_modality_concat_labels,
     """
     Support Vector Machine classifier.
     """
-    title = '{} Support Vector Machine using {}{}, {} HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
-    output_file_name = '{}_SVM_{}{}_{}_HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
+    title = f'{subject} Support Vector Machine using {region_approach}{resolution}, {HRFlag_process} HRFlag'
+    output_file_name = f'{subject}_SVM_{region_approach}{resolution}_{HRFlag_process}_HRFlag'
 
     X = all_modality_concat_bold
     y = all_modality_concat_labels
@@ -179,14 +180,14 @@ def _grid_mlp_decoder(all_modality_concat_bold, all_modality_concat_labels,
     """
     Scikit-Learn MLP with grid search.
     """
-    title = '{} Scikit-Learn’s MLPClassifier using {}{}, {} HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
-    output_file_name = '{}_skl_mlp_{}{}_{}_HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
+    title = f'{subject} Scikit-Learn’s MLPClassifier using {region_approach}{resolution}, {HRFlag_process} HRFlag'
+    output_file_name = f'{subject}_skl_mlp_{region_approach}{resolution}_{HRFlag_process}_HRFlag'
 
     X = all_modality_concat_bold
     y = all_modality_concat_labels
 
     categories = np.unique(y)
-    num_cond = len(set(categories))
+    # num_cond = len(set(categories))
     unique_conditions, order = np.unique(categories, return_index=True)
     unique_conditions = unique_conditions[np.argsort(order)]
 
@@ -216,8 +217,8 @@ def _grid_mlp_decoder(all_modality_concat_bold, all_modality_concat_labels,
 
     for mean, std, params in zip(grid.cv_results_['mean_test_score'],
                                  grid.cv_results_['std_test_score'],
-                                 grid.cv_results_['params']):
-        print("%0.3f (+/-%0.03f) for %r" % (mean, std * 2, params))
+                                 grid.cv_results_['params'], strict=False):
+        print(f"{mean:0.3f} (+/-{2 * std:0.03f}) for {params!r}")
 
     grid_predictions = grid.predict(X_test)
     print('Results on the test set:')
@@ -237,8 +238,8 @@ def _mlp_decoder(all_modality_concat_bold, all_modality_concat_labels,
     """
     Keras MLP, two dense layers.
     """
-    title = '{} Multi Layer Perceptron Neural Networks using {}{}, {} HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
-    output_file_name = '{}_mlp_{}{}_{}_HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
+    title = f'{subject} Multi Layer Perceptron Neural Networks using {region_approach}{resolution}, {HRFlag_process} HRFlag'
+    output_file_name = f'{subject}_mlp_{region_approach}{resolution}_{HRFlag_process}_HRFlag'
 
     X = all_modality_concat_bold
     y = all_modality_concat_labels
@@ -264,18 +265,16 @@ def _mlp_decoder(all_modality_concat_bold, all_modality_concat_labels,
 
     warnings.filterwarnings('ignore')
 
-    import importlib, warnings
-
     # -------- Optional dependency gate: TF/Keras only if installed --------
     if importlib.util.find_spec("tensorflow") is not None:
         from tensorflow.keras import Sequential
         from tensorflow.keras.layers import Dense
     elif importlib.util.find_spec("keras") is not None:
-        from keras.models import Sequential
         from keras.layers import Dense
+        from keras.models import Sequential
     else:
         warnings.warn("[mlp_decoder] Keras backend not available; skipping Keras MLP. "
-                  "Install tensorflow or keras to enable.", RuntimeWarning)
+                  "Install tensorflow or keras to enable.", RuntimeWarning, stacklevel=2,)
         return
     # ----------------------------------------------------------------------
 
@@ -314,8 +313,8 @@ def _grid_knn_decoder(all_modality_concat_bold, all_modality_concat_labels,
     """
     k-nearest neighbors classifier with GridSearchCV.
     """
-    title = '{} KNN using {}{}, {} HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
-    output_file_name = '{}_KNN_{}{}_{}_HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
+    title = f'{subject} KNN using {region_approach}{resolution}, {HRFlag_process} HRFlag'
+    output_file_name = f'{subject}_KNN_{region_approach}{resolution}_{HRFlag_process}_HRFlag'
 
     X = all_modality_concat_bold
     y = all_modality_concat_labels
@@ -357,8 +356,8 @@ def _knn_decoder(all_modality_concat_bold, all_modality_concat_labels,
     """
     k-nearest neighbors classifier. (k=8)
     """
-    title = '{} KNN using {}{}, {} HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
-    output_file_name = '{}_KNN_{}{}_{}_HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
+    title = f'{subject} KNN using {region_approach}{resolution}, {HRFlag_process} HRFlag'
+    output_file_name = f'{subject}_KNN_{region_approach}{resolution}_{HRFlag_process}_HRFlag'
 
     X = all_modality_concat_bold
     y = all_modality_concat_labels
@@ -381,7 +380,7 @@ def _knn_decoder(all_modality_concat_bold, all_modality_concat_labels,
 
     print(report)
     print(scores)
-    print('mean accuracy:%.4f' % np.mean(scores))
+    print(f"mean accuracy:{np.mean(scores):.4f}")
 
     cm_knn = confusion_matrix(y_test, y_pred)  # fixed undefined var
     model_cm = np.round(cm_knn.astype('float') / cm_knn.sum(axis=1)[:, np.newaxis], 2)
@@ -397,8 +396,8 @@ def _grid_random_forest_decoder(all_modality_concat_bold, all_modality_concat_la
     """
     Random Forest classifier with GridSearchCV.
     """
-    title = '{} Random Forest using {}{}, {} HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
-    output_file_name = '{}_RandomForest_{}{}_{}_HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
+    title = f'{subject} Random Forest using {region_approach}{resolution}, {HRFlag_process} HRFlag'
+    output_file_name = f'{subject}_RandomForest_{region_approach}{resolution}_{HRFlag_process}_HRFlag'
 
     X = all_modality_concat_bold
     y = all_modality_concat_labels
@@ -444,8 +443,8 @@ def _random_forest_decoder(all_modality_concat_bold, all_modality_concat_labels,
                            subject, decoder, region_approach, HRFlag_process,
                            results_outpath, cm_results_outpath, resolution):
 
-    title = '{} Random Forest using {}{}, {} HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
-    output_file_name = '{}_RF_{}_{}_HRFlag'.format(subject, region_approach, HRFlag_process)
+    title = f'{subject} Random Forest using {region_approach}{resolution}, {HRFlag_process} HRFlag'
+    output_file_name = f'{subject}_RF_{region_approach}_{HRFlag_process}_HRFlag'
 
     X = all_modality_concat_bold
     y = all_modality_concat_labels
@@ -468,7 +467,7 @@ def _random_forest_decoder(all_modality_concat_bold, all_modality_concat_labels,
 
     print(report)
     print(scores)
-    print('mean accuracy:%.4f' % np.mean(scores))
+    print(f"mean accuracy:{np.mean(scores):.4f}")
 
     cm_rfc = confusion_matrix(y_test, y_pred)
     model_cm = cm_rfc.astype('float') / cm_rfc.sum(axis=1)[:, np.newaxis]
@@ -484,8 +483,8 @@ def _grid_logistic_regression_decoder(all_modality_concat_bold, all_modality_con
     """
     Logistic Regression classifier with GridSearchCV.
     """
-    title = '{} Logistic Regression using {}{}, {} HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
-    output_file_name = '{}_LogisticRegression_{}{}_{}_HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
+    title = f'{subject} Logistic Regression using {region_approach}{resolution}, {HRFlag_process} HRFlag'
+    output_file_name = f'{subject}_LogisticRegression_{region_approach}{resolution}_{HRFlag_process}_HRFlag'
 
     X = all_modality_concat_bold
     y = all_modality_concat_labels
@@ -530,8 +529,8 @@ def _grid_ridge_decoder(all_modality_concat_bold, all_modality_concat_labels,
     """
     Ridge Regression classifier with GridSearchCV.
     """
-    title = '{} Ridge Regression using {}{}, {} HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
-    output_file_name = '{}_RidgeRegression_{}{}_{}_HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
+    title = f'{subject} Ridge Regression using {region_approach}{resolution}, {HRFlag_process} HRFlag'
+    output_file_name = f'{subject}_RidgeRegression_{region_approach}{resolution}_{HRFlag_process}_HRFlag'
 
     X = all_modality_concat_bold
     y = all_modality_concat_labels
@@ -574,8 +573,8 @@ def _grid_bagging_decoder(all_modality_concat_bold, all_modality_concat_labels,
     """
     Bagged Decision Trees (Bagging) classifier with GridSearchCV.
     """
-    title = '{} Bagging using {}{}, {} HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
-    output_file_name = '{}_Bagging_{}{}_{}_HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
+    title = f'{subject} Bagging using {region_approach}{resolution}, {HRFlag_process} HRFlag'
+    output_file_name = f'{subject}_Bagging_{region_approach}{resolution}_{HRFlag_process}_HRFlag'
 
     X = all_modality_concat_bold
     y = all_modality_concat_labels
@@ -621,8 +620,8 @@ def _grid_gaussian_nb_decoder(all_modality_concat_bold, all_modality_concat_labe
     """
     Gaussian Naive Bayes classifier with GridSearchCV.
     """
-    title = '{} Gaussian Naive Bayes using {}{}, {} HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
-    output_file_name = '{}_GaussianNB_{}{}_{}_HRFlag'.format(subject, region_approach, resolution, HRFlag_process)
+    title = f'{subject} Gaussian Naive Bayes using {region_approach}{resolution}, {HRFlag_process} HRFlag'
+    output_file_name = f'{subject}_GaussianNB_{region_approach}{resolution}_{HRFlag_process}_HRFlag'
 
     X = all_modality_concat_bold
     y = all_modality_concat_labels
@@ -660,7 +659,6 @@ def _grid_gaussian_nb_decoder(all_modality_concat_bold, all_modality_concat_labe
 def postproc_benchmark_decoder(subjects, modalities, decoders, region_approach,
                                HRFlag_process, resolution):
 
-    home_dir = str(REPO_ROOT) + "/"
     proc_data_path = str(DATA_DIR) + "/"
 
     for subject in subjects:
@@ -691,18 +689,19 @@ def postproc_benchmark_decoder(subjects, modalities, decoders, region_approach,
             writer = csv.writer(rslt_smry)
             writer.writerow(header)
 
-        results_summary_file = os.path.join(cm_results_outpath, 'results_summary.csv')
+        # results_summary_file = os.path.join(cm_results_outpath, 'results_summary.csv')
 
         log.info(f"{subject} | {region_approach}{resolution} | HRFlag={HRFlag_process}")
 
         all_modality_concat_bold, all_modality_concat_labels = _generate_all_modality_files(
             subject, modalities, region_approach, HRFlag_process, proc_data_path, resolution)
 
+        '''
         # number of parcels (for soft parcellation like dypac)
-        df_path = proc_data_path + 'medial_data/fMRI2/{}/{}/{}/{}_wm_fMRI2.npy'.format(
-            region_approach, resolution, subject, subject)
+        df_path = proc_data_path + f'medial_data/fMRI2/{region_approach}/{resolution}/{subject}/{subject}_wm_fMRI2.npy'
         df = np.load(df_path)
         parcel_no = int(len(df[0][:][1]))
+        '''
 
         print('all_modality_concat_bold shape', np.shape(all_modality_concat_bold))
         print('all_modality_concat_labels shape', np.shape(all_modality_concat_labels), '\n')
