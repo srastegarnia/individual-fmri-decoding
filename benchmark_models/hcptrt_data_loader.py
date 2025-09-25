@@ -1,509 +1,466 @@
-import numpy as np
-import pandas as pd
 import glob
 import os
 import pickle
-# from load_confounds import Params9, Params24
-# from nilearn.input_data import NiftiLabelsMasker, NiftiMasker, NiftiMapsMasker
+from time import time
+from typing import List, Tuple
+
+import numpy as np
+import pandas as pd
+from nilearn.interfaces.fmriprep import load_confounds_strategy
 from nilearn.maskers import NiftiLabelsMasker, NiftiMasker, NiftiMapsMasker
 from termcolor import colored
-import nilearn.datasets
-from dypac.masker import LabelsMasker, MapsMasker
-from nilearn.interfaces.fmriprep import load_confounds_strategy
-from time import time
-# from nilearn.interfaces.fmriprep import load_confounds
-import sys
-sys.path.append(os.path.join("../"))
-import utils
+
+# dypac is optional; only needed for region_approach == "dypac"
+try:
+    from dypac.masker import MapsMasker  # type: ignore
+    _HAS_DYPAC = True
+except Exception:
+    MapsMasker = None  # type: ignore
+    _HAS_DYPAC = False
+
+# utils lives at repo root; support both "package" and "script" usage.
+try:  # package context: individual-fmri-decoding/benchmark_models/...
+    from . import utils  # noqa: F401
+except Exception:  # script context: run from repo root
+    import utils  # type: ignore
+
 
 """
-Utilities for first step of reading and processing hcptrt data.
-We need to run it just once.
-The outputs are medial_data that are saved as fMRI2 and events2.
+Utilities for the first step of reading and processing HCPtrt data.
+Run once to produce intermediate "medial_data": fMRI2 (parcellated time series)
+and events2 (relabeled events per task/run).
 """
 
-class DataLoader():
-    
-    def __init__(self, TR, modality, subject, 
-                 bold_suffix, region_approach, resolution, 
-                 fMRI2_out_path=None, events2_out_path=None, 
-                 raw_data_path=None, pathevents=None, 
-                 raw_atlas_dir=None):  #confounds,       
-        
-        """ 
-        Initializer for DataLoader class.
-                
+
+class DataLoader:
+    def __init__(
+        self,
+        TR: float,
+        modality: str,
+        subject: str,
+        bold_suffix: str,
+        region_approach: str,
+        resolution: int,
+        fMRI2_out_path: str | None = None,
+        events2_out_path: str | None = None,
+        raw_data_path: str | None = None,
+        pathevents: str | None = None,
+        raw_atlas_dir: str | None = None,
+    ) -> None:
+        """
         Parameters
         ----------
-          TR: int
-              Repetition Time
-          confounds: str
-              fMRI confounds generating strategy, 
-              e.g. Params9()
-          modality: str
-              task, e.g. 'motor'
-          subject: str
-              subject ID, e.g. 'sub-01'
-          bold_suffix: str
-          region_approach: str, 
-              parcelation method
-              e.g.: 'MIST', 'dypac'
-          resolution: int
-              there are parcellations at different resolutions
-              e.g.: 444, 256, 512, 1024
-          fMRI2_out_path: str
-              path to bold files w directory
-          events2_out_path: str
-              path to events files w directory
-          raw_data_path: str
-              path to HCPtrt dataset fMRI files
-          pathevents: str
-              path to HCPtrt dataset events files
-          raw_atlas_path: str
-              path to maskers atlas e.g. 'difumo_atlases'
+        TR : float
+            Repetition time.
+        modality : str
+            Task label (e.g., "motor", "wm", ...).
+        subject : str
+            Subject ID (e.g., "sub-01").
+        bold_suffix : str
+            Suffix of preprocessed BOLD filenames.
+        region_approach : str
+            Parcellation approach: {"MIST","difumo","schaefer","dypac"} or "voxel" fallback.
+        resolution : int
+            Parcellation resolution (e.g., 444, 1024, ...).
+        fMRI2_out_path : str
+            Output directory for parcellated time-series .npy files.
+        events2_out_path : str
+            Output directory for relabeled events (pickle).
+        raw_data_path : str
+            Base path to fMRIPrep derivatives.
+        pathevents : str
+            Base path to events .tsv files.
+        raw_atlas_dir : str
+            Base path where atlas files live (for difumo / schaefer).
         """
-        
         self.TR = TR
-#         self.confounds = confounds
         self.modality = modality
         self.subject = subject
         self.bold_suffix = bold_suffix
         self.region_approach = region_approach
         self.resolution = resolution
-        self.fMRI2_out_path = fMRI2_out_path
-        self.events2_out_path = events2_out_path
-        self.raw_data_path = raw_data_path
-        self.pathevents = pathevents
-        self.raw_atlas_dir = raw_atlas_dir
-        
-        if not os.path.exists(self.fMRI2_out_path):
-            os.makedirs(self.fMRI2_out_path)
+        self.fMRI2_out_path = fMRI2_out_path or ""
+        self.events2_out_path = events2_out_path or ""
+        self.raw_data_path = raw_data_path or ""
+        self.pathevents = pathevents or ""
+        self.raw_atlas_dir = raw_atlas_dir or ""
 
-        if not os.path.exists(self.events2_out_path):
-            os.makedirs(self.events2_out_path)
-            
-        if not os.path.exists(self.raw_atlas_dir):
-            os.makedirs(self.raw_atlas_dir)
+        os.makedirs(self.fMRI2_out_path, exist_ok=True)
+        os.makedirs(self.events2_out_path, exist_ok=True)
+        os.makedirs(self.raw_atlas_dir, exist_ok=True)
 
-
-    def _load_fmri_data(self): 
-        
+    # ------------------------------ fMRI ------------------------------ #
+    def _load_fmri_data(self) -> Tuple[List[np.ndarray], NiftiMasker, List[str]]:
         """
-        Out put is a list of preprocessed fMRI files using the
-        given masker. (for each modality) 
+        Returns
+        -------
+        fmri_t : list[np.ndarray]
+            List of 2D arrays (n_volumes x n_parcels) per run.
+        masker : NiftiMasker | NiftiLabelsMasker | NiftiMapsMasker
+            Fitted masker used to extract signals.
+        data_path : list[str]
+            Sorted list of BOLD file paths used.
         """
+        data_path = sorted(
+            glob.glob(
+                f"{self.raw_data_path}{self.subject}/**/*{self.modality}*{self.bold_suffix}",
+                recursive=True,
+            )
+        )
 
-        data_path = sorted(glob.glob(self.raw_data_path+'{}/**/*{}*'
-                                     .format(self.subject, self.modality)+self.bold_suffix, 
-                                     recursive=True))
-                
-        print(colored('{}, {}:'.format(self.subject, self.modality), attrs=['bold']))  
-        
-#         for i in range(0, len(data_path)):
-#             print(data_path[i].split('func/', 1)[1])
-        
-        # make sure we don't exceed 14 runs.        
-        if (len(data_path) > 15):
-            data_extra_files = len(data_path) - 15 
-            print(colored('Regressed out {} extra following fMRI file(s):'
-                          .format(data_extra_files), 'red', attrs=['bold']))
+        print(colored(f"{self.subject}, {self.modality}:", attrs=["bold"]))
+
+        # Keep behavior: cap at 15 runs (historical off-by-one kept intact).
+        if len(data_path) > 15:
+            data_extra_files = len(data_path) - 15
+            print(
+                colored(
+                    f"Regressed out {data_extra_files} extra following fMRI file(s):",
+                    "red",
+                    attrs=["bold"],
+                )
+            )
             for i in range(14, len(data_path)):
-                print(colored(data_path[i].split('func/', 1)[1], 'red'))
-            for i in range(14, len(data_path)):
+                print(colored(data_path[i].split("func/", 1)[1], "red"))
+            for _ in range(14, len(data_path)):
                 data_path.pop()
-                                   
-        print('The number of bold files:', len(data_path))
- 
-        # generate masks
-        if self.region_approach == 'MIST':
-                                                                        
-            masker = NiftiLabelsMasker(labels_img='{}_{}.nii.gz'.format(self.region_approach,
-                                                                          self.resolution), 
-                                       standardize=True, smoothing_fwhm=5)
-            
+
+        print(f"The number of bold files: {len(data_path)}")
+
+        # Select masker by approach
+        if self.region_approach == "MIST":
+            masker = NiftiLabelsMasker(
+                labels_img=f"{self.region_approach}_{self.resolution}.nii.gz",
+                standardize=True,
+                smoothing_fwhm=5,
+            )
+            fmri_t: list[np.ndarray] = []
             t0 = time()
-            fmri_t = []
             for dpath in data_path:
-                print(dpath.split('func/', 1)[1])
-                
-#                 data_fmri = masker.fit_transform(dpath, confounds=self.confounds.load(dpath)) #old nilearn
-                
-                conf = load_confounds_strategy(dpath, denoise_strategy="simple",
-                                               motion="basic", global_signal="basic") #new nilearn
-
-                data_fmri = masker.fit_transform(dpath, confounds=conf[0]) #new nilearn
+                print(dpath.split("func/", 1)[1])
+                conf = load_confounds_strategy(
+                    dpath, denoise_strategy="simple", motion="basic", global_signal="basic"
+                )
+                data_fmri = masker.fit_transform(dpath, confounds=conf[0])
                 fmri_t.append(data_fmri)
-                
-#                print(dpath.split('func/', 1)[1])
-#                print(data_fmri)
-                print('shape:', np.shape(data_fmri))
+                print("shape:", np.shape(data_fmri))
+            print(
+                f"Data processing time for {self.subject} using {self.region_approach} "
+                f"with {self.resolution} resolution: {round(time()-t0, 3)} s"
+            )
 
-            print("Data processing time for {} using {} with {} resolution:".format(self.subject, self.region_approach,
-                                                                                    self.resolution), round(time()-t0, 3), "s")
-              
-            
-        elif self.region_approach == 'difumo':
-            
-##             num_parcels = int(self.region_approach.split("_", 1)[1])
-#            atlas = nilearn.datasets.fetch_atlas_difumo(data_dir=self.raw_atlas_dir, 
-#                                                        dimension=self.resolution)
-#            atlas_filename = atlas['maps']
-#           atlas_labels = atlas['labels']
-            t0 = time()
-            atlas_filename = os.path.join(self.raw_atlas_dir + '/{}_atlases/{}/3mm/maps.nii.gz'.format(self.region_approach,
-                                                                                                       self.resolution))
-            masker = NiftiMapsMasker(maps_img=atlas_filename, standardize=True, 
-                                     verbose=5, smoothing_fwhm=5)
-            
+        elif self.region_approach == "difumo":
+            # Use local difumo atlas layout preserved from original code
+            atlas_filename = os.path.join(
+                self.raw_atlas_dir,
+                f"{self.region_approach}_atlases/{self.resolution}/3mm/maps.nii.gz",
+            )
+            masker = NiftiMapsMasker(
+                maps_img=atlas_filename, standardize=True, verbose=5, smoothing_fwhm=5
+            )
             fmri_t = []
-            for dpath in data_path:    
-#                 data_fmri = masker.fit_transform(dpath, confounds=self.confounds.load(dpath)) #old nilearn
-                
-                conf = load_confounds_strategy(dpath, denoise_strategy="simple",
-                                               motion="basic", global_signal="basic") #new nilearn
-
-                data_fmri = masker.fit_transform(dpath, confounds=conf[0]) #new nilearn
-                fmri_t.append(data_fmri)
-
-                print('shape:', np.shape(data_fmri))
-
-            print("Data processing time for {} using {} with {} resolution:".format(self.subject, self.region_approach,
-                                                                                    self.resolution), round(time()-t0, 3), "s")
-
-
-        elif self.region_approach == 'schaefer':
-
             t0 = time()
-            atlas_filename = os.path.join(self.raw_atlas_dir + '/{}_2018/Schaefer2018_{}Parcels_7Networks'\
-                                                               '_order_FSLMNI152_1mm.nii.gz'.format(self.region_approach,
-                                                                                                    self.resolution))
-
-            masker = NiftiLabelsMasker(labels_img=atlas_filename, standardize=True,
-                                       verbose=5, smoothing_fwhm=5)
-
-            fmri_t = []
             for dpath in data_path:
-#                 data_fmri = masker.fit_transform(dpath, confounds=self.confounds.load(dpath)) #old nilearn
-
-                conf = load_confounds_strategy(dpath, denoise_strategy="simple",
-                                               motion="basic", global_signal="basic") #new nilearn
-                data_fmri = masker.fit_transform(dpath, confounds=conf[0]) #new nilearn
+                conf = load_confounds_strategy(
+                    dpath, denoise_strategy="simple", motion="basic", global_signal="basic"
+                )
+                data_fmri = masker.fit_transform(dpath, confounds=conf[0])
                 fmri_t.append(data_fmri)
+                print("shape:", np.shape(data_fmri))
+            print(
+                f"Data processing time for {self.subject} using {self.region_approach} "
+                f"with {self.resolution} resolution: {round(time()-t0, 3)} s"
+            )
 
-                print('shape:', np.shape(data_fmri))
-            print("Data processing time for {} using {} with {} resolution:".format(self.subject, self.region_approach,
-                                                                                    self.resolution), round(time()-t0, 3), "s")
+        elif self.region_approach == "schaefer":
+            atlas_filename = os.path.join(
+                self.raw_atlas_dir,
+                f"{self.region_approach}_2018/"
+                f"Schaefer2018_{self.resolution}Parcels_7Networks_order_FSLMNI152_1mm.nii.gz",
+            )
+            masker = NiftiLabelsMasker(
+                labels_img=atlas_filename, standardize=True, verbose=5, smoothing_fwhm=5
+            )
+            fmri_t = []
+            t0 = time()
+            for dpath in data_path:
+                conf = load_confounds_strategy(
+                    dpath, denoise_strategy="simple", motion="basic", global_signal="basic"
+                )
+                data_fmri = masker.fit_transform(dpath, confounds=conf[0])
+                fmri_t.append(data_fmri)
+                print("shape:", np.shape(data_fmri))
+            print(
+                f"Data processing time for {self.subject} using {self.region_approach} "
+                f"with {self.resolution} resolution: {round(time()-t0, 3)} s"
+            )
 
-
-
-        elif self.region_approach == 'dypac':
+        elif self.region_approach == "dypac":
             
-#             LOAD_CONFOUNDS_PARAMS = {
-#                 "strategy": ["motion", "high_pass", "wm_csf", "global_signal"],
-#                 "motion": "basic",
-#                 "wm_csf": "basic",
-#                 "global_signal": "basic",
-#                 "demean": True
-#             } # costume confounds
+            if not _HAS_DYPAC:
+                raise ImportError(
+                    'region_approach="dypac" requires the "dypac" package. '
+                    "Install it or choose a different region_approach."
+                    )
             
-            path_dypac = '/data/cisl/pbellec/models'
-            file_mask = os.path.join(path_dypac, 
-                                     '{}_space-MNI152NLin2009cAsym_label-GM_mask.nii.gz'.format(self.subject))
-            file_dypac = os.path.join(path_dypac,
-                                      '{}_space-MNI152NLin2009cAsym_desc-dypac{}_components.nii.gz'.format(
-                                          self.subject, self.resolution))
-            print('file_mask: ', file_mask)
-            print('file_dypac: ', file_dypac, '\n')
+            path_dypac = "/data/cisl/pbellec/models"
+            file_mask = os.path.join(
+                path_dypac, f"{self.subject}_space-MNI152NLin2009cAsym_label-GM_mask.nii.gz"
+            )
+            file_dypac = os.path.join(
+                path_dypac,
+                f"{self.subject}_space-MNI152NLin2009cAsym_desc-dypac{self.resolution}_components.nii.gz",
+            )
+            print("file_mask: ", file_mask)
+            print("file_dypac: ", file_dypac, "\n")
             masker = NiftiMasker(standardize=True, detrend=False, smoothing_fwhm=5, mask_img=file_mask)
-            
+
             fmri_t = []
             for dpath in data_path:
-                
-                conf = load_confounds_strategy(dpath, denoise_strategy='simple', global_signal='basic')
-#                 conf = load_confounds(dpath, strategy=**LOAD_CONFOUNDS_PARAMS) # costume confounds      
-    
+                conf = load_confounds_strategy(dpath, denoise_strategy="simple", global_signal="basic")
                 masker.fit(dpath)
                 maps_masker = MapsMasker(masker=masker, maps_img=file_dypac)
                 data_fmri = maps_masker.transform(img=dpath, confound=conf[0])
                 fmri_t.append(data_fmri)
-                
-                print('fMRI file:' ,dpath.split('func/', 1)[1])
-                print('shape:', np.shape(data_fmri), '\n')
-#                print(data_fmri)
-                print('\n')
-            
-        else:
-            masker = NiftiMasker(standardize=True)                   
+                print("fMRI file:", dpath.split("func/", 1)[1])
+                print("shape:", np.shape(data_fmri), "\n")
+                print("\n")
 
+        else:
+            # Voxel-wise fallback
+            masker = NiftiMasker(standardize=True)
             fmri_t = []
-            for dpath in data_path:    
-#                 data_fmri = masker.fit_transform(dpath, confounds=self.confounds.load(dpath)) #old nilearn
-                
-                conf = load_confounds_strategy(dpath, denoise_strategy="simple",
-                                               motion="basic", global_signal="basic") #new nilearn
-                data_fmri = masker.fit_transform(dpath, confounds=conf[0]) #new nilearn
-                
-                
-                
+            for dpath in data_path:
+                conf = load_confounds_strategy(
+                    dpath, denoise_strategy="simple", motion="basic", global_signal="basic"
+                )
+                data_fmri = masker.fit_transform(dpath, confounds=conf[0])
                 fmri_t.append(data_fmri)
 
-        print('### Reading Nifiti files is done!')
-        print('-----------------------------------------------')
-
+        print("### Reading Nifiti files is done!")
+        print("-----------------------------------------------")
         return fmri_t, masker, data_path
-   
-    
-    
-    def _load_events_files(self):
-        
-        """
-        Output is a list of relabeled events file.
-        """
 
-        events_path = sorted(glob.glob(self.pathevents + '{}/**/func/*{}*_events.tsv'
-                                       .format(self.subject, self.modality), 
-                                       recursive=True))
-        
-        # make sure we don't exceed 14 runs.
-        if (len(events_path) > 14):
+    # ------------------------------ Events ------------------------------ #
+    def _load_events_files(self) -> List[pd.DataFrame]:
+        """
+        Relabel events per task and annotate with session/run index.
+        """
+        events_path = sorted(
+            glob.glob(
+                f"{self.pathevents}{self.subject}/**/func/*{self.modality}*_events.tsv",
+                recursive=True,
+            )
+        )
+
+        # Cap at 14 runs (kept as in original).
+        if len(events_path) > 14:
             events_extra_files = len(events_path) - 14
-            print(colored('Regressed out {} extra following events file(s):'
-                          .format(events_extra_files), 'red', attrs=['bold']))
-
+            print(
+                colored(
+                    f"Regressed out {events_extra_files} extra following events file(s):",
+                    "red",
+                    attrs=["bold"],
+                )
+            )
             for i in range(14, len(events_path)):
-                print(colored(events_path[i].split('func/', 1)[1], 'red'))
+                print(colored(events_path[i].split("func/", 1)[1], "red"))
+            for _ in range(14, len(events_path)):
+                events_path.pop()
 
-            for i in range(14, len(events_path)):
-                events_path.pop()            
+        print(f"The number of events files: {len(events_path)}")
 
-        print('The number of events files:', len(events_path))
-        
-        # Labeling the conditions
-        events_files = []
+        events_files: list[pd.DataFrame] = []
         count = 1
-        count_str=str(count)
 
         for epath in events_path:
-
             event = pd.read_csv(epath, sep="\t", encoding="utf8")
-            print(epath.split('func/', 1)[1])
+            print(epath.split("func/", 1)[1])
             print(event.head(5))
             print(np.shape(event))
             print(np.unique(event.trial_type))
-            
-            if self.modality == 'emotion': 
-                event.trial_type = event['trial_type'].replace(['response_face',
-                                                                'response_shape'],
-                                                               ['fear','shape'])
-                    
-            if self.modality == 'language':
-                event.trial_type = event['trial_type'].replace(['presentation_story',
-                                                                'question_story',
-                                                                'response_story',
-                                                                'presentation_math',
-                                                                'question_math',
-                                                                'response_math'],
-                                                               ['story','story','story',
-                                                                'math','math','math']) 
 
-            if self.modality == 'motor':             
-                event.trial_type = event['trial_type'].replace(['response_left_foot',
-                                                                'response_left_hand',
-                                                                'response_right_foot',
-                                                                'response_right_hand',
-                                                                'response_tongue'],
-                                                               ['footL','handL','footR',
-                                                                'handR','tongue']) 
+            # Relabel per modality
+            if self.modality == "emotion":
+                event.trial_type = event["trial_type"].replace(
+                    ["response_face", "response_shape"], ["fear", "shape"]
+                )
 
-            if self.modality == 'relational':                   
-                event.trial_type = event['trial_type'].replace(['Control','Relational'],
-                                                               ['match','relational']) 
-                
-                
-            if self.modality == 'wm':                    
-                event.trial_type = event.stim_type.astype(str) + '_' + \
-                event.trial_type.astype(str)
-                event.trial_type = event['trial_type'].replace(['Body_0-Back','Body_2-Back',
-                                                                'Face_0-Back','Face_2-Back',
-                                                                'Place_0-Back','Place_2-Back',
-                                                                'Tools_0-Back','Tools_2-Back'],
-                                                               ['body0b','body2b','face0b',
-                                                                'face2b','place0b','place2b',
-                                                                'tool0b','tool2b'])
-            
-#            print(colored('After relabeling:', attrs=['bold']))
-#            print(np.unique(event.trial_type), '\n')
-#            print(event.trial_type.head(20))
+            if self.modality == "language":
+                event.trial_type = event["trial_type"].replace(
+                    [
+                        "presentation_story",
+                        "question_story",
+                        "response_story",
+                        "presentation_math",
+                        "question_math",
+                        "response_math",
+                    ],
+                    ["story", "story", "story", "math", "math", "math"],
+                )
 
-#----------------------------------------------------------------------------------
+            if self.modality == "motor":
+                event.trial_type = event["trial_type"].replace(
+                    [
+                        "response_left_foot",
+                        "response_left_hand",
+                        "response_right_foot",
+                        "response_right_hand",
+                        "response_tongue",
+                    ],
+                    ["footL", "handL", "footR", "handR", "tongue"],
+                )
+
+            if self.modality == "relational":
+                event.trial_type = event["trial_type"].replace(
+                    ["Control", "Relational"], ["match", "relational"]
+                )
+
+            if self.modality == "wm":
+                event.trial_type = event.stim_type.astype(str) + "_" + event.trial_type.astype(str)
+                event.trial_type = event["trial_type"].replace(
+                    [
+                        "Body_0-Back",
+                        "Body_2-Back",
+                        "Face_0-Back",
+                        "Face_2-Back",
+                        "Place_0-Back",
+                        "Place_2-Back",
+                        "Tools_0-Back",
+                        "Tools_2-Back",
+                    ],
+                    ["body0b", "body2b", "face0b", "face2b", "place0b", "place2b", "tool0b", "tool2b"],
+                )
+
+            # Session/run annotation
             conditions = list(event.trial_type)
-#            print('conditions:', conditions)
-
-            session_idx = []
-            count_idx = []
-            for condition in conditions:
-
-                ses = epath.split('_task')[0].split('func/')[1].partition('_')[2]
-                temp_run = epath.split('run')[1]
+            session_idx: list[str] = []
+            count_idx: list[int] = []
+            for _ in conditions:
+                ses = epath.split("_task")[0].split("func/")[1].partition("_")[2]
+                temp_run = epath.split("run")[1]
                 run = utils.between(temp_run, "-", "_")
-                session = ses + '_run-' + run
+                session = f"{ses}_run-{run}"
                 session_idx.append(session)
                 count_idx.append(count)
 
-            event['session'] =  session_idx
-            event['count'] =  count_idx
-#            print(event)
-
-#----------------------------------------------------------------------------------
+            event["session"] = session_idx
+            event["count"] = count_idx
 
             events_files.append(event)
-
             count += 1
-            count_str=str(count)
-        
-        print('### Reading events files is done!')
-        print('-----------------------------------------------')
 
+        print("### Reading events files is done!")
+        print("-----------------------------------------------")
         return events_files
 
-        
-############################################## Shima local ###########################################   
-# def reading_events2(subject, modality, events2_out_path, region_approach):
-    
-#     events_outname = events2_out_path + subject + '_' +  modality + '_events2'
-#     pickle_in = open(events_outname, "rb")
-#     events_files = pd.read_pickle(events_outname)
-    
-#     return events_files      
-######################################################################################################      
-    
-    
-def _check_input(fmri_t, events_files):
 
+# ------------------------------ Checks & Saving ------------------------------ #
+def _check_input(fmri_t: List[np.ndarray], events_files: List[pd.DataFrame]) -> None:
     """
-    - Remove bold files extra ending volumes if there exist.
-    - Check events and fMRI files consistency.
-        
-    Parameters
-    ----------
-    fmri_t: list
-        output of load_fmri_data function
-    events_files: list
-        output of load_events_files function
+    - Remove extra ending volumes to match shapes across runs.
+    - Check events and fMRI files counts.
     """
+    data_length = int(len(fmri_t) or 0)
 
-    data_lenght = len(fmri_t)
-    data_lenght = int (data_lenght or 0)
-
-    # Removing extra volumes
-    for i in range(0, data_lenght-1):
-        if fmri_t[i].shape != fmri_t[i+1].shape:
-            print('There is mismatch in BOLD file size:')
-
-            if fmri_t[i].shape > fmri_t[i+1].shape:         
-                a = np.shape(fmri_t[i])[0] - np.shape(fmri_t[i+1])[0]        
+    # Harmonize run lengths
+    for i in range(0, data_length - 1):
+        if fmri_t[i].shape != fmri_t[i + 1].shape:
+            print("There is mismatch in BOLD file size:")
+            if fmri_t[i].shape > fmri_t[i + 1].shape:
+                a = np.shape(fmri_t[i])[0] - np.shape(fmri_t[i + 1])[0]
                 fmri_t[i] = fmri_t[i][0:-a, 0:]
-                print('The', a,'extra volumes of bold file number', i,'is removed.')
+                print(f"The {a} extra volumes of bold file number {i} is removed.")
             else:
-                b = np.shape(fmri_t[i+1])[0] - np.shape(fmri_t[i])[0]        
-                fmri_t[i+1] = fmri_t[i+1][0:-b, 0:]
-                print('The', b,'extra volumes of bold file number', i+1,'is removed.')
+                b = np.shape(fmri_t[i + 1])[0] - np.shape(fmri_t[i])[0]
+                fmri_t[i + 1] = fmri_t[i + 1][0:-b, 0:]
+                print(f"The {b} extra volumes of bold file number {i+1} is removed.")
 
     if len(events_files) != len(fmri_t):
-        print('Miss-matching between events and fmri files')
-        print('Number of Nifti files:' ,len(fmri_t))
-        print('Number of events files:' ,len(events_files))
+        print("Miss-matching between events and fmri files")
+        print("Number of Nifti files:", len(fmri_t))
+        print("Number of events files:", len(events_files))
     else:
-        print('Events and fMRI files are Consistent.')
+        print("Events and fMRI files are Consistent.")
 
-    print('### Cheking data is done!')
-    print('-----------------------------------------------')
+    print("### Cheking data is done!")
+    print("-----------------------------------------------")
 
 
-    
-def _save_files(fmri_t, events_files, subject, modality, 
-                fMRI2_out_path, events2_out_path):
-    
-# def _save_files(events_files, subject, modality, 
-#                 events2_out_path, region_approach):
-    
+def _save_files(
+    fmri_t: List[np.ndarray],
+    events_files: List[pd.DataFrame],
+    subject: str,
+    modality: str,
+    fMRI2_out_path: str,
+    events2_out_path: str,
+) -> None:
     """
-    - Save a matrix of preprocessed fMRI file for each task.
-    - Save an events file for each modality as a pickle file.
+    - Save parcellated fMRI matrices per task.
+    - Save relabeled events (pickle) per task.
     """
-    
     # fMRI
-    bold_outname = fMRI2_out_path + subject + '_' + modality + '_fMRI2.npy'
+    bold_outname = os.path.join(fMRI2_out_path, f"{subject}_{modality}_fMRI2.npy")
     np.save(bold_outname, fmri_t)
 
+    # sanity round-trip
     temp = np.load(bold_outname, allow_pickle=True)
-    fmri_t = temp
-    
-    print('Bold file:', bold_outname)
-    print('### Saving Nifiti files as matrices is done!')
-    print('-----------------------------------------------')
-    
+    fmri_t = temp  # noqa: F841 (kept for parity with original logging)
+
+    print("Bold file:", bold_outname)
+    print("### Saving Nifiti files as matrices is done!")
+    print("-----------------------------------------------")
+
     # events
-    events_outname = events2_out_path + subject + '_' + modality + '_events2'
-    events_dict = events_files
-    pickle_out = open(events_outname,"wb")
-    pickle.dump(events_dict, pickle_out)
-    pickle_out.close()
+    events_outname = os.path.join(events2_out_path, f"{subject}_{modality}_events2")
+    with open(events_outname, "wb") as fh:
+        pickle.dump(events_files, fh)
 
-    print('Events pickle file:', events_outname)
-    print('### Saving events pickle files is done!')
-    print('-----------------------------------------------')
-    
+    print("Events pickle file:", events_outname)
+    print("### Saving events pickle files is done!")
+    print("-----------------------------------------------")
 
-    
-def postproc_data_loader(subject, modalities, region_approach, resolution): # confounds, 
-    
+
+# ------------------------------ Orchestrator ------------------------------ #
+def postproc_data_loader(subject: str, modalities: list[str], region_approach: str, resolution: int) -> None:
+    """
+    Orchestrate loading, checking, and saving for a subject across modalities.
+    Paths kept as in the original code (scratch/CC layout).
+    """
     TR = 1.49
 
-#    ##### Elm #####
-#    pathevents = '/data/neuromod/projects/ml_models_tutorial/data/hcptrt/HCPtrt_events_DATA/'
-#    raw_data_path = '/data/neuromod/projects/ml_models_tutorial/data/hcptrt/derivatives/'
-#    proc_data_path = '/home/SRastegarnia/hcptrt_decoding_Shima/data/'
+    # CC paths (kept)
+    pathevents = "/home/rastegar/scratch/hcptrt/"
+    raw_data_path = "/home/rastegar/scratch/hcptrt/derivatives/fmriprep-20.2lts/fmriprep/"
+    proc_data_path = "/home/rastegar/projects/def-pbellec/rastegar/hcptrt_decoding_shima/data/"
 
+    bold_suffix = "_space-MNI152NLin2009cAsym_desc-preproc_bold.nii.gz"
+    raw_atlas_dir = os.path.join(proc_data_path, "raw_atlas_dir")
 
-    ##### CC #####
-   # pathevents = '/home/rastegar/projects/def-pbellec/rastegar/hcptrt/HCPtrt_events_DATA/'
-    pathevents = '/home/rastegar/scratch/hcptrt/'
-#    raw_data_path = pathevents + 'derivatives/fmriprep-20.2lts/fmriprep/'
-    raw_data_path = '/home/rastegar/scratch/hcptrt/derivatives/fmriprep-20.2lts/fmriprep/'
-    proc_data_path = '/home/rastegar/projects/def-pbellec/rastegar/hcptrt_decoding_shima/data/'
-
-
-    bold_suffix = '_space-MNI152NLin2009cAsym_desc-preproc_bold.nii.gz'
-
-    raw_atlas_dir = os.path.join(proc_data_path, "raw_atlas_dir") 
-
-    fMRI2_out_path = proc_data_path + 'medial_data/fMRI2/{}/{}/{}/'.format(region_approach,
-                                                                           resolution, subject)        
-    events2_out_path = proc_data_path + 'medial_data/events2/{}/{}/{}/'.format(region_approach,
-                                                                               resolution, subject)
+    fMRI2_out_path = os.path.join(proc_data_path, f"medial_data/fMRI2/{region_approach}/{resolution}/{subject}/")
+    events2_out_path = os.path.join(proc_data_path, f"medial_data/events2/{region_approach}/{resolution}/{subject}/")
 
     for modality in modalities:
-        print(colored(modality,'red', attrs=['bold']))
+        print(colored(modality, "red", attrs=["bold"]))
 
-        load_data = DataLoader(TR = TR,  
-                               modality = modality, subject = subject, 
-                               bold_suffix = bold_suffix,
-                               region_approach = region_approach,
-                               resolution = resolution,
-                               fMRI2_out_path = fMRI2_out_path, 
-                               events2_out_path = events2_out_path, 
-                               raw_data_path = raw_data_path, 
-                               pathevents = pathevents, 
-                               raw_atlas_dir = raw_atlas_dir) #confounds = confounds,
+        loader = DataLoader(
+            TR=TR,
+            modality=modality,
+            subject=subject,
+            bold_suffix=bold_suffix,
+            region_approach=region_approach,
+            resolution=resolution,
+            fMRI2_out_path=fMRI2_out_path,
+            events2_out_path=events2_out_path,
+            raw_data_path=raw_data_path,
+            pathevents=pathevents,
+            raw_atlas_dir=raw_atlas_dir,
+        )
 
-        fmri_t, masker, data_path  = load_data._load_fmri_data()
-
-        events_files = load_data._load_events_files()
-#             events_files = _reading_events2(subject, modality, events2_out_path, region_approach) # Shima local
+        fmri_t, _masker, _paths = loader._load_fmri_data()
+        events_files = loader._load_events_files()
 
         _check_input(fmri_t, events_files)
+        _save_files(fmri_t, events_files, subject, modality, fMRI2_out_path, events2_out_path)
 
-        _save_files(fmri_t, events_files, subject, modality,  
-                    fMRI2_out_path, events2_out_path)
 
