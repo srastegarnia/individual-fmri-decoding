@@ -1,86 +1,108 @@
-# working on it from feb15 2022
+from __future__ import annotations
+
+import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-# import nibabel as nib
-import os
-import glob
-import csv
-import sys
-# import time
 from termcolor import colored
-import matplotlib.pyplot as plt
-# from matplotlib.pyplot import *
-from pathlib import Path, PurePath
-from nilearn import image, plotting
-#from nilearn.input_data import NiftiMasker, NiftiLabelsMasker
-from nilearn.maskers import NiftiLabelsMasker, NiftiMasker, NiftiMapsMasker
-from nilearn.glm.first_level import FirstLevelModel
-#from load_confounds import Params9
-import csv
-from csv import reader
-# from sklearn.model_selection import KFold,LeaveOneGroupOut,train_test_split,cross_val_score  
-# from nilearn.decoding import Decoder
-# from IPython.display import Markdown, display
-# from sklearn.svm import LinearSVC
 
-    
-def postproc_beta_map_check(subject, task_label, region_approach, resolution, HRFlag_process): 
-    
-    proc_data_path = '/home/SRastegarnia/hcptrt_decoding_Shima/data/'
-    raw_data_path = '/data/neuromod/DATA/cneuromod/hcptrt/derivatives/fmriprep-20.2lts/fmriprep/'
-    mask_name = 'space-MNI152NLin2009cAsym_desc-brain_mask.nii.gz'
-    
-    print(colored((subject, region_approach, resolution), 'red',attrs=['bold']))
-    
-    tpl_mask = raw_data_path + '{}/ses-001/func/{}_ses-001_task-{}_run-1_'.format(subject,subject,task_label) + mask_name
-    print(tpl_mask)
-    
-    final_bold_path = proc_data_path + 'processed_data/proc_fMRI/{}/{}/{}/' \
-                             '{}_{}_{}_final_fMRI.npy'.format(region_approach, resolution, subject,  
-                                                              subject, task_label, HRFlag_process)
-    
-    print(final_bold_path)
+# ---- Cluster paths ----
+PROC_DATA_ROOT = Path("/home/SRastegarnia/hcptrt_decoding_Shima/data/")
+RAW_DATA_ROOT = Path(
+    "/data/neuromod/DATA/cneuromod/hcptrt/derivatives/fmriprep-20.2lts/fmriprep/"
+)
+
+
+def postproc_beta_map_check(
+    subject: str,
+    task_label: str,
+    region_approach: str,
+    resolution: int | str,
+    HRFlag_process: str,
+) -> None:
+    """
+    Simple sanity check for generated beta maps and labels.
+    Logic preserved; paths mirror the original cluster layout.
+    """
+    mask_name = "space-MNI152NLin2009cAsym_desc-brain_mask.nii.gz"
+
+    print(colored((subject, region_approach, resolution), "red", attrs=["bold"]))
+
+    # Example mask file path (for information/visibility only)
+    tpl_mask = (
+        RAW_DATA_ROOT
+        / subject
+        / "ses-001"
+        / "func"
+        / f"{subject}_ses-001_task-{task_label}_run-1_{mask_name}"
+    )
+    print(str(tpl_mask))
+
+    # Final bold/labels produced by the pipeline
+    final_bold_path = (
+        PROC_DATA_ROOT
+        / "processed_data"
+        / "proc_fMRI"
+        / str(region_approach)
+        / str(resolution)
+        / subject
+        / f"{subject}_{task_label}_{HRFlag_process}_final_fMRI.npy"
+    )
+    print(str(final_bold_path))
+
     final_bold = np.load(final_bold_path)
-    print('Shape of api_file:', np.shape(final_bold))
-    
-  
-    final_labels_path = proc_data_path + 'processed_data/proc_events/{}/{}/{}/' \
-                               '{}_{}_{}_final_labels.csv'.format(region_approach, resolution, subject, 
-                                                                  subject, task_label, HRFlag_process)
-    
-    print(final_labels_path)
-    final_labels = pd.read_csv(final_labels_path, encoding = "utf8", header=None)
+    print("Shape of api_file:", np.shape(final_bold))
+
+    final_labels_path = (
+        PROC_DATA_ROOT
+        / "processed_data"
+        / "proc_events"
+        / str(region_approach)
+        / str(resolution)
+        / subject
+        / f"{subject}_{task_label}_{HRFlag_process}_final_labels.csv"
+    )
+    print(str(final_labels_path))
+
+    # Read labels, echo basic summaries (same intent as original)
+    final_labels = pd.read_csv(final_labels_path, encoding="utf8", header=None)
     print(final_labels)
-    print('Number of events:' ,len(final_labels))
-    
-    ################################################################################################
-#     data = pd.read_csv(final_labels_path, header=None)
-    with open(final_labels_path, 'r') as read_obj:
-        csv_reader = reader(read_obj)
-        column1 = []
-        for row in csv_reader:
-            column1.append(row)
-    print(len(column1))
-    flat_list = [item for sublist in column1 for item in sublist]
+    print("Number of events:", len(final_labels))
+
+    # Flatten labels (replaces the manual csv.reader loop with equivalent pandas)
+    flat_list: list[str] = final_labels.iloc[:, 0].astype(str).tolist()
+    print(len(flat_list))
     print(flat_list)
     print(len(flat_list))
-#     print("Converting CSV to tab-delimited file...")
-#     with open(final_labels_path) as inputFile: 
-#         outPath = final_labels_path.split('.csv')[0] + '_tab.tsv'
-#         with open(outPath, 'w', newline='') as outputFile:
-#             reader = csv.DictReader(inputFile, delimiter=',') 
-#             writer = csv.DictWriter(outputFile, reader.fieldnames, delimiter='\t')
-# #             writer = csv.writer(outputFile, reader.fieldnames, delimiter='\t')
-#             writer.writeheader()
-#             writer.writerows(reader)
-#     print("Conversion complete.")
-    
-    ################################################################################################         
-    
-#     glm = FirstLevelModel(mask_img=tpl_mask, t_r=1.49, high_pass=0.01)
-#     glm.fit(run_imgs=final_bold_path, events=outPath)
-#     print('glm is fitted')
+    # --------------------------------------------------------------------------------
+
+    # The original GLM sandbox stayed commented-out; leaving it as-is for reference:
+    # from nilearn.glm.first_level import FirstLevelModel
+    # glm = FirstLevelModel(mask_img=str(tpl_mask), t_r=1.49, high_pass=0.01)
+    # glm.fit(run_imgs=str(final_bold_path), events=str(outPath))
+    # print('glm is fitted')
+
+
+def validate_environment() -> None:
+    """Light checks: imports OK and whether expected data roots are present."""
+    required_dirs = [
+        str(RAW_DATA_ROOT),
+        str(PROC_DATA_ROOT),
+    ]
+    missing = [p for p in required_dirs if not os.path.isdir(p)]
+    if missing:
+        print("Environment OK (imports). Data roots not present on this machine:")
+        for m in missing:
+            print(" -", m)
+    else:
+        print("Environment OK: imports and data roots present.")
+
+
+if __name__ == "__main__":
+    # This module is typically imported from other scripts.
+    # Keep main minimal; no CLI side effects.
+    pass
     
     
     
