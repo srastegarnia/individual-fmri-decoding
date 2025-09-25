@@ -10,7 +10,7 @@ from nilearn.interfaces.fmriprep import load_confounds_strategy
 from nilearn.maskers import NiftiLabelsMasker, NiftiMasker, NiftiMapsMasker
 from termcolor import colored
 
-# dypac is optional; only needed for region_approach == "dypac"
+# dypac optional (dynamic parcellation); not used in this study
 try:
     from dypac.masker import MapsMasker  # type: ignore
     _HAS_DYPAC = True
@@ -196,7 +196,7 @@ class DataLoader:
             )
 
         elif self.region_approach == "dypac":
-            
+
             if not _HAS_DYPAC:
                 raise ImportError(
                     'region_approach="dypac" requires the "dypac" package. '
