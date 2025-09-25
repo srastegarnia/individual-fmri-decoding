@@ -23,8 +23,8 @@ from sklearn.svm import SVC
 from sklearn.naive_bayes import MultinomialNB, GaussianNB, ComplementNB, BernoulliNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier, BaggingClassifier
-from keras.models import Sequential
-from keras.layers import Dense
+# from keras.models import Sequential
+# from keras.layers import Dense
 from termcolor import colored
 
 # sys.path.append(os.path.join(".."))
@@ -256,6 +256,21 @@ def _mlp_decoder(all_modality_concat_bold, all_modality_concat_labels,
     X_test = scaler.transform(X_test)
 
     warnings.filterwarnings('ignore')
+
+    import importlib, warnings
+
+    # -------- Optional dependency gate: TF/Keras only if installed --------
+    if importlib.util.find_spec("tensorflow") is not None:
+        from tensorflow.keras import Sequential
+        from tensorflow.keras.layers import Dense
+    elif importlib.util.find_spec("keras") is not None:
+        from keras.models import Sequential
+        from keras.layers import Dense
+    else:
+        warnings.warn("[mlp_decoder] Keras backend not available; skipping Keras MLP. "
+                  "Install tensorflow or keras to enable.", RuntimeWarning)
+        return
+    # ----------------------------------------------------------------------
 
     t0 = time()
     model_mlp = Sequential()
